@@ -1,0 +1,218 @@
+<!DOCTYPE html>
+<html lang="ko">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>점심 메뉴 룰렛</title>
+
+    <!-- ===== PWA & META ===== -->
+    <link rel="icon" href="icon.png" />
+    <link rel="manifest" href="manifest.json" />
+    <meta name="theme-color" content="#4a67ff" />
+
+    <!-- Open Graph -->
+    <meta property="og:type" content="website" />
+    <meta property="og:title" content="Lunch Menu Recommendation App" />
+    <meta property="og:description" content="점심 메뉴를 룰렛으로 골라보세요! 오늘 뭐 먹을지 더 이상 고민하지 마세요." />
+    <meta property="og:image" content="og_image.png" />
+    <meta property="og:url" content="https://yourusername.github.io/lunch/" />
+    <meta name="twitter:card" content="summary_large_image" />
+
+    <!-- GSAP & Confetti -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/gsap/3.12.4/gsap.min.js" defer></script>
+    <script src="https://cdn.jsdelivr.net/npm/canvas-confetti@1.6.0/dist/confetti.browser.min.js" defer></script>
+
+    <style>
+      :root {
+        /* 룰렛 : 80vmin, 최소 240px, 최대 360px */
+        --size: clamp(240px, 80vmin, 360px);
+      }
+      * { box-sizing: border-box; }
+      body {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        min-height: 100vh;
+        margin: 0;
+        font-family: "Pretendard", "Noto Sans KR", sans-serif;
+        background: #fafafa;
+        padding: 1rem;
+      }
+
+      /* ===== 룰렛 영역 ===== */
+      #wheel-wrapper {
+        position: relative;
+        width: var(--size);
+        height: var(--size);
+        margin-bottom: 2rem;
+      }
+      canvas#wheelSvg { width: 100%; height: 100%; transform-origin: center; }
+      #pin {
+        position: absolute;
+        top: -12px; left: 50%; transform: translateX(-50%);
+        border-left: 18px solid transparent;
+        border-right: 18px solid transparent;
+        border-bottom: 32px solid #e63b3b;
+        width: 0; height: 0;
+        z-index: 10;
+      }
+
+      /* ===== 버튼 & 텍스트 ===== */
+      #spin-btn {
+        padding: 0.65rem 1.8rem;
+        border: none;
+        border-radius: 8px;
+        background: #4a67ff;
+        color: #fff;
+        font-size: clamp(0.9rem, 2.8vw, 1rem);
+        cursor: pointer;
+        transition: background 0.3s ease;
+      }
+      #spin-btn:hover { background: #354be0; }
+      #spin-btn:disabled { opacity: 0.6; cursor: not-allowed; }
+
+      #result {
+        margin-top: 1.2rem;
+        font-size: clamp(1.1rem, 3.2vw, 1.25rem);
+        font-weight: 600;
+        color:#333;
+        text-align:center;
+      }
+
+      /* ===== 팝업 & 오버레이 ===== */
+      #overlay {
+        position: fixed; inset: 0;
+        background: rgba(0,0,0,0.4);
+        display: flex; align-items:center; justify-content:center;
+        opacity: 0; pointer-events:none;
+        transition: opacity .3s ease;
+      }
+      #overlay.show { opacity: 1; pointer-events:auto; }
+      .popup-box {
+        background: #fff;
+        padding: 1.6rem 2rem;
+        border-radius: 12px;
+        text-align: center;
+        max-width: 90%;
+        box-shadow: 0 8px 20px rgba(0,0,0,0.15);
+        animation: popScale .35s ease;
+      }
+      .popup-box p { font-size: 1.1rem; margin: 0 0 1rem; }
+      .popup-box button {
+        padding: 0.5rem 1.2rem;
+        border: none;
+        border-radius: 6px;
+        background: #4a67ff;
+        color: #fff;
+        font-size: 1rem;
+        cursor: pointer;
+      }
+      @keyframes popScale { from{ transform:scale(0.7); opacity:0;} to{ transform:scale(1); opacity:1;} }
+    </style>
+  </head>
+
+  <body>
+    <div id="wheel-wrapper">
+      <canvas id="wheelSvg" width="600" height="600"></canvas>
+      <div id="pin"></div>
+    </div>
+    <button id="spin-btn">돌리기</button>
+    <p id="result">원하는 메뉴를 골라볼까요?</p>
+
+    <!-- 팝업/오버레이 -->
+    <div id="overlay">
+      <div class="popup-box">
+        <p id="popupText"></p>
+        <button id="popupClose">확인</button>
+      </div>
+    </div>
+
+    <script>
+      // ---------------- 데이터 ----------------
+      const menuItems = ["김밥","라면","돈까스","샌드위치","비빔밥","우동","볶음밥","떡볶이"];
+      const colors = ["#ffcb05","#ffa600","#ef476f","#06d6a0","#118ab2","#ffd166","#8ecae6","#b5179e"];
+
+      // ------------- 캔버스 & 드로우 -------------
+      const canvas = document.getElementById("wheelSvg");
+      const ctx = canvas.getContext("2d");
+      function resizeCanvas(){
+        const wrapper = document.getElementById("wheel-wrapper");
+        const ratio = window.devicePixelRatio || 1;
+        const size = wrapper.clientWidth;
+        canvas.width = size * ratio; canvas.height = size * ratio;
+        ctx.setTransform(1,0,0,1,0,0);
+        ctx.scale(ratio,ratio);
+        ctx.translate(size/2,size/2);
+        drawWheel(size/2);
+      }
+      function drawWheel(r){
+        const slice = 2*Math.PI/menuItems.length;
+        ctx.clearRect(-r,-r,r*2,r*2);
+        menuItems.forEach((item,i)=>{
+          ctx.beginPath(); ctx.moveTo(0,0); ctx.fillStyle=colors[i%colors.length];
+          const start=i*slice; const end=start+slice;
+          ctx.arc(0,0,r,start,end); ctx.fill();
+          ctx.save();
+          ctx.fillStyle="#000"; ctx.rotate(start+slice/2);
+          ctx.textAlign="center";
+          const fontSize=Math.max(12,r*0.09);
+          ctx.font=`bold ${fontSize}px Pretendard, Noto Sans KR, sans-serif`;
+          ctx.translate(r*0.65,0); ctx.rotate(Math.PI/2);
+          ctx.fillText(item,0,0); ctx.restore();
+        });
+      }
+      window.addEventListener("resize",resizeCanvas); resizeCanvas();
+
+      // ------------- 스핀 로직 -------------
+      const spinBtn=document.getElementById("spin-btn");
+      const resultEl=document.getElementById("result");
+      const singleDeg=360/menuItems.length; const pinOffset=90;
+      let spinning=false;
+      spinBtn.addEventListener("click",spinWheel);
+      function spinWheel(){
+        if(spinning) return;
+        spinning=true; spinBtn.disabled=true; resultEl.textContent="돌리는 중...";
+        const idx=Math.floor(Math.random()*menuItems.length);
+        const target=360-idx*singleDeg-singleDeg/2-pinOffset;
+        const extra=Math.floor(Math.random()*2)+5; const total=extra*360+target;
+        gsap.to(canvas,{rotation:total,duration:5.5,ease:"power4.out",onComplete:()=>{
+          spinning=false; spinBtn.disabled=false;
+          showPopup(menuItems[idx]);
+        }});
+      }
+
+      // ------------- 팝업 & Confetti -------------
+      const overlay=document.getElementById("overlay");
+      const popupText=document.getElementById("popupText");
+      const popupClose=document.getElementById("popupClose");
+
+      function showPopup(item){
+        popupText.textContent=`오늘의 점심은 ${item} 🎉`;
+        overlay.classList.add("show");
+        fireConfetti();
+        const timer=setTimeout(closePopup,2000);
+        popupClose.onclick=()=>{ clearTimeout(timer); closePopup(); };
+        resultEl.textContent=`오늘 점심은 ➜ ${item}!`;
+      }
+      function closePopup(){ overlay.classList.remove("show"); }
+
+      function fireConfetti(){
+        const duration=1500; // 1.5초
+        const end=Date.now()+duration;
+        (function frame(){
+          confetti({particleCount:8,angle:60,spread:55,origin:{x:0}});
+          confetti({particleCount:8,angle:120,spread:55,origin:{x:1}});
+          if(Date.now()<end){ requestAnimationFrame(frame); }
+        })();
+      }
+
+      // ------------- 서비스워커 등록 -------------
+      if ('serviceWorker' in navigator) {
+        window.addEventListener('load', () => {
+          navigator.serviceWorker.register('sw.js');
+        });
+      }
+    </script>
+  </body>
+</html>
